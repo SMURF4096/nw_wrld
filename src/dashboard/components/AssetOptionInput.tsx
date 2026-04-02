@@ -89,17 +89,42 @@ type AssetOptionInputProps = {
   kind?: "file" | "dir";
   baseDir?: string;
   value: unknown;
+  defaultValue?: unknown;
   onChange?: ((next: string) => void) | null;
   extensions?: unknown;
   allowCustom?: boolean;
   className?: string;
 };
 
+export function isAssetOptionCustomValue({
+  allowCustom,
+  value,
+  defaultValue,
+  availableValues,
+}: {
+  allowCustom: boolean;
+  value: unknown;
+  defaultValue?: unknown;
+  availableValues: Set<string>;
+}): boolean {
+  if (!allowCustom) return false;
+
+  const raw = String(value ?? "").trim();
+  if (!raw) return false;
+  if (hasListSyntax(raw)) return true;
+  if (availableValues.has(raw)) return false;
+  if (availableValues.size > 0) return true;
+
+  const def = String(defaultValue ?? "").trim();
+  return raw !== def;
+}
+
 export const AssetOptionInput = memo(
   ({
     kind = "file",
     baseDir = "",
     value,
+    defaultValue,
     onChange,
     extensions = null,
     allowCustom = true,
@@ -158,25 +183,15 @@ export const AssetOptionInput = memo(
     const availableValues = useMemo(() => new Set(available.map((o) => o.value)), [available]);
 
     useEffect(() => {
-      if (!allowCustom) {
-        setIsCustom(false);
-        return;
-      }
-      const raw = String(value ?? "").trim();
-      if (!raw) {
-        setIsCustom(false);
-        return;
-      }
-      if (hasListSyntax(raw)) {
-        setIsCustom(true);
-        return;
-      }
-      if (!availableValues.has(raw)) {
-        setIsCustom(true);
-        return;
-      }
-      setIsCustom(false);
-    }, [allowCustom, availableValues, value]);
+      setIsCustom(
+        isAssetOptionCustomValue({
+          allowCustom,
+          value,
+          defaultValue,
+          availableValues,
+        })
+      );
+    }, [allowCustom, availableValues, defaultValue, value]);
 
     const current = String(value ?? "");
 
@@ -193,9 +208,13 @@ export const AssetOptionInput = memo(
     }, [allowCustom, available, kind, onChange, value]);
 
     const options = useMemo(() => {
-      if (!current.trim() || availableValues.has(current.trim())) return available;
-      return [{ value: current.trim(), label: current.trim() }, ...available];
-    }, [available, availableValues, current]);
+      const def = String(defaultValue ?? "").trim();
+      const needsDefault = def && !availableValues.has(def);
+
+      if (!needsDefault) return available;
+
+      return [...available, { value: def, label: def }];
+    }, [available, availableValues, defaultValue]);
 
     const selectValue = isCustom ? CUSTOM_VALUE : current.trim();
 

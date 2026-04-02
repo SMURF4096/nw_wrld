@@ -58,6 +58,7 @@ const Projector = {
   debugLogQueue: [],
   debugLogTimeout: null,
   moduleIntrospectionCache: new Map(),
+  renderStatusEl: null,
 
   getAssetsBaseUrlForSandboxToken(token: unknown) {
     const safe = String(token || "").trim();
@@ -78,6 +79,71 @@ const Projector = {
       .nwWrldAppBridge as { logToMain?: (message: unknown) => unknown } | undefined;
     if (!appBridge || typeof appBridge.logToMain !== "function") return;
     appBridge.logToMain(message);
+  },
+
+  ensureRenderStatusElement() {
+    if (this.renderStatusEl && this.renderStatusEl.isConnected) {
+      return this.renderStatusEl;
+    }
+    const host = document.body || document.documentElement;
+    if (!host) return null;
+    const existing = document.getElementById("projector-render-status");
+    if (existing) {
+      this.renderStatusEl = existing;
+      return existing;
+    }
+    const el = document.createElement("div");
+    el.id = "projector-render-status";
+    el.style.cssText = [
+      "position:fixed",
+      "inset:0",
+      "display:none",
+      "align-items:center",
+      "justify-content:center",
+      "z-index:2147483647",
+      "background:rgba(0,0,0,0.65)",
+      "color:#f5f5f5",
+      "font-family:monospace",
+      "font-size:12px",
+      "letter-spacing:0.06em",
+      "text-transform:uppercase",
+      "pointer-events:none",
+    ].join(";");
+    const text = document.createElement("div");
+    text.id = "projector-render-status-text";
+    text.style.cssText = [
+      "padding:10px 14px",
+      "border:1px solid rgba(255,255,255,0.25)",
+      "background:rgba(0,0,0,0.45)",
+    ].join(";");
+    el.appendChild(text);
+    host.appendChild(el);
+    this.renderStatusEl = el;
+    return el;
+  },
+
+  setRenderStatus(status: unknown, message: unknown = "") {
+    const statusId = String(status || "").trim();
+    const el = this.ensureRenderStatusElement();
+    if (!el) return;
+    const textEl = el.querySelector("#projector-render-status-text");
+    if (statusId === "ready" || !statusId) {
+      el.style.display = "none";
+      if (textEl) textEl.textContent = "";
+      return;
+    }
+    const defaultMessage =
+      statusId === "loading"
+        ? "Loading track..."
+        : statusId === "empty"
+          ? "No enabled modules"
+          : statusId === "error"
+            ? "Track failed to load"
+            : "Working...";
+    if (textEl) {
+      textEl.textContent = String(message || "").trim() || defaultMessage;
+    }
+    el.style.display = "flex";
   },
 
   queueDebugLog,

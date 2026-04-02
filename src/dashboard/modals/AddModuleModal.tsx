@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtom } from "jotai";
-import { FaPlus, FaCode, FaEye, FaSpinner, FaCheck, FaExclamationTriangle } from "react-icons/fa";
+import {
+  FaPlus,
+  FaCode,
+  FaEye,
+  FaSpinner,
+  FaCheck,
+  FaExclamationTriangle,
+  FaSyncAlt,
+} from "react-icons/fa";
 import { Modal } from "../shared/Modal";
 import { useIPCListener, useIPCSend } from "../core/hooks/useIPC";
 import { ModalHeader } from "../components/ModalHeader";
@@ -26,6 +34,7 @@ type PredefinedModule = {
   name: string;
   category: string;
   status?: string;
+  starterSync?: "inSync" | "outOfSync";
   methods?: ModuleMethod[];
   instancesOnCurrentTrack?: number;
 };
@@ -50,6 +59,7 @@ type AddModuleModalProps = {
   skippedWorkspaceModules?: Array<{ file: string; reason: string }>;
   onCreateNewModule?: () => void;
   onEditModule: (moduleId: string) => void;
+  onConfirmRewrite?: (message: string, onConfirm: () => void, options?: { title?: string }) => void;
   mode?: "add-to-track" | "manage-modules";
 };
 
@@ -63,23 +73,60 @@ export const AddModuleModal = ({
   skippedWorkspaceModules,
   onCreateNewModule: _onCreateNewModule,
   onEditModule,
+  onConfirmRewrite,
   mode = "add-to-track",
 }: AddModuleModalProps) => {
   const sendToProjector = useIPCSend("dashboard-to-projector");
   const [hoveredPreviewModuleId, setHoveredPreviewModuleId] = useState<string | null>(null);
   const [loadingPreviewModuleId, setLoadingPreviewModuleId] = useState<string | null>(null);
+  const [rewritingModuleId, setRewritingModuleId] = useState<string | null>(null);
+  const [rewriteError, setRewriteError] = useState<string | null>(null);
   const previewRequestRef = useRef<{ moduleId: string | null; requestId: string | null }>({
     moduleId: null,
     requestId: null,
   });
+  const previewDispatchedRequestIdRef = useRef<string | null>(null);
   const lastAutoPreviewSentRef = useRef<string | null>(null);
+  const previewClearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingClearAfterLoadRef = useRef(false);
 
-  const handleClose = () => {
+  const clearPreviewNow = useCallback(() => {
     setHoveredPreviewModuleId(null);
     setLoadingPreviewModuleId(null);
-    previewRequestRef.current = { moduleId: null, requestId: null };
+    previewRequestRef.current = {
+      moduleId: null,
+      requestId: null,
+    };
+    previewDispatchedRequestIdRef.current = null;
     lastAutoPreviewSentRef.current = null;
+    pendingClearAfterLoadRef.current = false;
     sendToProjector("clear-preview", {});
+  }, [sendToProjector]);
+
+  const schedulePreviewClear = useCallback(() => {
+    if (previewClearTimeoutRef.current) {
+      clearTimeout(previewClearTimeoutRef.current);
+      previewClearTimeoutRef.current = null;
+    }
+    previewClearTimeoutRef.current = setTimeout(() => {
+      previewClearTimeoutRef.current = null;
+      clearPreviewNow();
+    }, 120);
+  }, [clearPreviewNow]);
+
+  const cancelScheduledPreviewClear = useCallback(() => {
+    if (previewClearTimeoutRef.current) {
+      clearTimeout(previewClearTimeoutRef.current);
+      previewClearTimeoutRef.current = null;
+    }
+  }, []);
+
+  const handleClose = () => {
+    cancelScheduledPreviewClear();
+    pendingClearAfterLoadRef.current = false;
+    setRewritingModuleId(null);
+    setRewriteError(null);
+    clearPreviewNow();
     onClose();
   };
 
@@ -139,7 +186,7 @@ export const AddModuleModal = ({
       const trackUnknown = tracksUnknown[effectiveTrackIndex];
       if (typeof trackUnknown !== "object" || !trackUnknown) return;
       const t = trackUnknown as Record<string, unknown>;
-      
+
       const instanceId = `inst_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const modulesArray = Array.isArray(t.modules) ? t.modules : [];
       modulesArray.push({
@@ -147,7 +194,7 @@ export const AddModuleModal = ({
         type: module.id || module.name,
       });
       t.modules = modulesArray;
-      
+
       const moduleMethods = Array.isArray(module.methods) ? module.methods : [];
       const hasMethodData = moduleMethods.length > 0;
       const constructorMethods = hasMethodData
@@ -179,10 +226,11 @@ export const AddModuleModal = ({
           options: [{ name: "duration", value: 0 }],
         });
       }
-      
-      const modulesData = typeof t.modulesData === "object" && t.modulesData
-        ? (t.modulesData as Record<string, unknown>)
-        : {};
+
+      const modulesData =
+        typeof t.modulesData === "object" && t.modulesData
+          ? (t.modulesData as Record<string, unknown>)
+          : {};
       modulesData[instanceId] = {
         constructor: constructorMethods,
         methods: {},
@@ -213,22 +261,77 @@ export const AddModuleModal = ({
       .filter((s) => Boolean(s.file && s.reason));
   }, [skippedWorkspaceModules]);
 
-  const handlePreviewHandshake = useCallback((event: unknown, data: unknown) => {
-    if (!data || typeof data !== "object") return;
-    const d = data as Record<string, unknown>;
-    if (d.type !== "preview-module-ready" && d.type !== "preview-module-error") return;
-
-    const payload = (d.props || {}) as Record<string, unknown>;
-    const requestId = payload.requestId || null;
-    if (!requestId) return;
-    if (previewRequestRef.current.requestId !== requestId) return;
-
-    setLoadingPreviewModuleId(null);
-    previewRequestRef.current = {
-      moduleId: previewRequestRef.current.moduleId,
-      requestId: null,
-    };
+  const handleRewriteStarterModule = useCallback(async (moduleId: string) => {
+    if (!moduleId) return;
+    setRewriteError(null);
+    setRewritingModuleId(moduleId);
+    try {
+      const bridge = globalThis.nwWrldBridge as
+        | {
+            workspace?: {
+              rewriteStarterModule?: (
+                moduleName: string
+              ) => Promise<{ ok?: unknown; reason?: unknown } | null>;
+            };
+          }
+        | undefined;
+      if (typeof bridge?.workspace?.rewriteStarterModule !== "function") {
+        throw new Error("Rewrite action unavailable");
+      }
+      const result = await bridge.workspace.rewriteStarterModule(moduleId);
+      if (!result || result.ok !== true) {
+        const reason =
+          result && typeof result.reason === "string" ? result.reason : "rewrite failed";
+        throw new Error(reason);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setRewriteError(`Failed to rewrite ${moduleId}: ${message}`);
+    } finally {
+      setRewritingModuleId((current) => (current === moduleId ? null : current));
+    }
   }, []);
+
+  const handleRequestRewriteStarterModule = useCallback(
+    (moduleId: string) => {
+      if (!moduleId || rewritingModuleId === moduleId) return;
+      const confirmMessage = `This will replace your workspace copy of "${moduleId}.js" with the bundled starter module from nw_wrld. Any edits in your project folder for this module will be lost.`;
+      const confirmAction = () => {
+        void handleRewriteStarterModule(moduleId);
+      };
+      if (typeof onConfirmRewrite === "function") {
+        onConfirmRewrite(confirmMessage, confirmAction, { title: "ARE YOU SURE?" });
+        return;
+      }
+      confirmAction();
+    },
+    [handleRewriteStarterModule, onConfirmRewrite, rewritingModuleId]
+  );
+
+  const handlePreviewHandshake = useCallback(
+    (event: unknown, data: unknown) => {
+      if (!data || typeof data !== "object") return;
+      const d = data as Record<string, unknown>;
+      if (d.type !== "preview-module-ready" && d.type !== "preview-module-error") return;
+
+      const payload = (d.props || {}) as Record<string, unknown>;
+      const requestId = payload.requestId || null;
+      if (!requestId) return;
+      if (previewRequestRef.current.requestId !== requestId) return;
+
+      setLoadingPreviewModuleId(null);
+      previewRequestRef.current = {
+        moduleId: previewRequestRef.current.moduleId,
+        requestId: null,
+      };
+      previewDispatchedRequestIdRef.current = null;
+      if (pendingClearAfterLoadRef.current) {
+        pendingClearAfterLoadRef.current = false;
+        clearPreviewNow();
+      }
+    },
+    [clearPreviewNow]
+  );
 
   useIPCListener("from-projector", handlePreviewHandshake, [handlePreviewHandshake]);
 
@@ -246,20 +349,29 @@ export const AddModuleModal = ({
 
       setLoadingPreviewModuleId(null);
       previewRequestRef.current = { moduleId: String(moduleId), requestId: null };
+      previewDispatchedRequestIdRef.current = null;
+      if (pendingClearAfterLoadRef.current) {
+        pendingClearAfterLoadRef.current = false;
+        clearPreviewNow();
+      }
     },
-    [loadingPreviewModuleId]
+    [loadingPreviewModuleId, clearPreviewNow]
   );
 
   useEffect(() => {
     if (!isOpen) {
-      setHoveredPreviewModuleId(null);
-      setLoadingPreviewModuleId(null);
-      previewRequestRef.current = { moduleId: null, requestId: null };
-      lastAutoPreviewSentRef.current = null;
+      cancelScheduledPreviewClear();
+      clearPreviewNow();
       return;
     }
     if (!hoveredPreviewModuleId) return;
     if (lastAutoPreviewSentRef.current === hoveredPreviewModuleId) return;
+    if (
+      previewRequestRef.current.requestId &&
+      previewDispatchedRequestIdRef.current === previewRequestRef.current.requestId
+    ) {
+      return;
+    }
 
     const mod =
       (predefinedModules || []).find(
@@ -306,8 +418,22 @@ export const AddModuleModal = ({
         methods: {},
       },
     });
+    previewDispatchedRequestIdRef.current = previewRequestRef.current.requestId;
     lastAutoPreviewSentRef.current = hoveredPreviewModuleId;
-  }, [isOpen, hoveredPreviewModuleId, predefinedModules, sendToProjector]);
+  }, [
+    isOpen,
+    hoveredPreviewModuleId,
+    predefinedModules,
+    sendToProjector,
+    cancelScheduledPreviewClear,
+    clearPreviewNow,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      cancelScheduledPreviewClear();
+    };
+  }, [cancelScheduledPreviewClear]);
 
   if (mode === "add-to-track") {
     if (trackIndex === null || trackIndex === undefined) return null;
@@ -326,8 +452,16 @@ export const AddModuleModal = ({
               <div className="pl-6 uppercase flex flex-col gap-2">
                 {modules.map((module) => {
                   const handlePreview = () => {
+                    cancelScheduledPreviewClear();
+                    pendingClearAfterLoadRef.current = false;
                     const hoveredId = module.id || module.name;
                     if (!hoveredId) return;
+                    if (
+                      previewRequestRef.current.moduleId === hoveredId &&
+                      Boolean(previewRequestRef.current.requestId)
+                    ) {
+                      return;
+                    }
                     if (hoveredPreviewModuleId === hoveredId) return;
                     const requestId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                     setHoveredPreviewModuleId(hoveredId);
@@ -394,32 +528,44 @@ export const AddModuleModal = ({
                     };
 
                     sendToProjector(previewData.type, previewData.props);
+                    previewDispatchedRequestIdRef.current = requestId;
                     lastAutoPreviewSentRef.current = hoveredId;
                   };
 
                   const handleClearPreview = () => {
-                    setHoveredPreviewModuleId(null);
-                    setLoadingPreviewModuleId(null);
-                    previewRequestRef.current = {
-                      moduleId: null,
-                      requestId: null,
-                    };
-                    lastAutoPreviewSentRef.current = null;
-                    sendToProjector("clear-preview", {});
+                    if (isHovered && isLoading) {
+                      pendingClearAfterLoadRef.current = true;
+                    }
+                    schedulePreviewClear();
                   };
 
                   const isHovered = hoveredPreviewModuleId === (module.id || module.name);
                   const isLoading = loadingPreviewModuleId === (module.id || module.name);
                   const isFailed = module?.status === "failed";
                   const moduleId = module.id || module.name;
+                  const isOutOfSync = module?.starterSync === "outOfSync";
+                  const isRewriting = rewritingModuleId === moduleId;
                   const loadFailedText = moduleId
                     ? `Module "${moduleId}.js" exists in your workspace but failed to load. Fix the module file (syntax/runtime error) and save to retry.`
+                    : null;
+                  const outOfSyncText = moduleId
+                    ? `Module "${moduleId}.js" differs from the bundled starter module.`
+                    : null;
+                  const rewriteTooltipText = moduleId
+                    ? `Rewrite "${moduleId}.js" with the bundled starter module.`
                     : null;
 
                   return (
                     <div key={module.id || module.name} className="flex items-center gap-1 group">
                       <div className="font-mono text-[11px] text-neutral-300 uppercase flex-1 flex items-center gap-2">
                         <div className="truncate">{module.name}</div>
+                        {isOutOfSync ? (
+                          <Tooltip content={outOfSyncText} position="top">
+                            <span className="px-1 py-[1px] border border-yellow-500/20 text-yellow-500/70 text-[8px] leading-none cursor-help">
+                              DIFFERS
+                            </span>
+                          </Tooltip>
+                        ) : null}
                         {isFailed ? (
                           <span className="inline-flex items-center">
                             <Tooltip content={loadFailedText} position="top">
@@ -433,7 +579,9 @@ export const AddModuleModal = ({
                                   try {
                                     (
                                       globalThis as unknown as {
-                                        nwWrldBridge?: { app?: { openProjectorDevTools?: () => void } };
+                                        nwWrldBridge?: {
+                                          app?: { openProjectorDevTools?: () => void };
+                                        };
                                       }
                                     )?.nwWrldBridge?.app?.openProjectorDevTools?.();
                                   } catch {}
@@ -459,6 +607,29 @@ export const AddModuleModal = ({
                         ) : null}
                       </div>
                       <div className="flex items-center gap-3">
+                        {isOutOfSync ? (
+                          <Tooltip content={rewriteTooltipText} position="top">
+                            <span className="inline-flex">
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRequestRewriteStarterModule(moduleId);
+                                }}
+                                type="secondary"
+                                icon={
+                                  isRewriting ? (
+                                    <FaSpinner className="animate-spin" />
+                                  ) : (
+                                    <FaSyncAlt />
+                                  )
+                                }
+                                title="Rewrite bundled starter module into workspace"
+                                className="text-yellow-500/70"
+                                disabled={isRewriting}
+                              />
+                            </span>
+                          </Tooltip>
+                        ) : null}
                         <div
                           onMouseEnter={handlePreview}
                           onMouseLeave={handleClearPreview}
@@ -520,6 +691,10 @@ export const AddModuleModal = ({
                 ))}
               </div>
             </div>
+          ) : null}
+
+          {rewriteError ? (
+            <div className="text-[11px] text-red-400/80 break-words">{rewriteError}</div>
           ) : null}
         </div>
       </div>

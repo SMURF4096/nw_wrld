@@ -20,14 +20,28 @@ const {
 test("workspace normalizer filters and shapes module summaries", () => {
   const input = [
     null,
-    { file: "A.js", id: "A", name: "A", category: "Cat", hasMetadata: true },
+    {
+      file: "A.js",
+      id: "A",
+      name: "A",
+      category: "Cat",
+      hasMetadata: true,
+      starterSync: "outOfSync",
+    },
     { file: "B.js", id: "B", hasMetadata: false },
     { file: "", id: "C", hasMetadata: true },
     { file: "D.js", id: "", hasMetadata: true },
   ];
   const res = normalizeModuleSummaries(input);
   assert.deepEqual(res, [
-    { file: "A.js", id: "A", name: "A", category: "Cat", hasMetadata: true },
+    {
+      file: "A.js",
+      id: "A",
+      name: "A",
+      category: "Cat",
+      hasMetadata: true,
+      starterSync: "outOfSync",
+    },
     { file: "B.js", id: "B", hasMetadata: false },
   ]);
 });
@@ -35,7 +49,14 @@ test("workspace normalizer filters and shapes module summaries", () => {
 test("workspace normalizer shapes module scan result (summaries + skipped)", () => {
   const input = {
     summaries: [
-      { file: "A.js", id: "A", name: "A", category: "Cat", hasMetadata: true },
+      {
+        file: "A.js",
+        id: "A",
+        name: "A",
+        category: "Cat",
+        hasMetadata: true,
+        starterSync: "inSync",
+      },
       { file: "", id: "B", hasMetadata: false },
     ],
     skipped: [
@@ -46,7 +67,16 @@ test("workspace normalizer shapes module scan result (summaries + skipped)", () 
   };
   const res = normalizeWorkspaceModuleScanResult(input);
   assert.deepEqual(res, {
-    summaries: [{ file: "A.js", id: "A", name: "A", category: "Cat", hasMetadata: true }],
+    summaries: [
+      {
+        file: "A.js",
+        id: "A",
+        name: "A",
+        category: "Cat",
+        hasMetadata: true,
+        starterSync: "inSync",
+      },
+    ],
     skipped: [{ file: "text copy.js", reason: "Invalid filename: must match ^[A-Za-z][A-Za-z0-9]*$" }],
   });
 });

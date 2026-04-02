@@ -5,6 +5,7 @@ import { updateUserData } from "../utils";
 import { useIPCListener } from "./useIPC";
 
 type ModuleStatus = "uninspected" | "ready" | "failed";
+type StarterSyncStatus = "inSync" | "outOfSync";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -18,6 +19,7 @@ type ModuleEntry = {
   category: string;
   methods: unknown[];
   status: ModuleStatus;
+  starterSync?: StarterSyncStatus;
 };
 
 type UseWorkspaceModulesArgs = {
@@ -114,10 +116,19 @@ export const useWorkspaceModules = ({
 
       const validModules = listable
         .map((s) => {
-          const rec = s as { id?: unknown; name?: unknown; category?: unknown };
+          const rec = s as {
+            id?: unknown;
+            name?: unknown;
+            category?: unknown;
+            starterSync?: unknown;
+          };
           const moduleId = rec?.id ? String(rec.id) : "";
           const name = rec?.name ? String(rec.name) : "";
           const category = rec?.category ? String(rec.category) : "";
+          const starterSync =
+            rec?.starterSync === "inSync" || rec?.starterSync === "outOfSync"
+              ? rec.starterSync
+              : undefined;
           if (!moduleId || !name || !category) return null;
           if (!/^[A-Za-z][A-Za-z0-9]*$/.test(moduleId)) return null;
           return {
@@ -126,6 +137,7 @@ export const useWorkspaceModules = ({
             category,
             methods: [],
             status: "uninspected",
+            starterSync,
           } satisfies ModuleEntry;
         })
         .filter(Boolean) as ModuleEntry[];

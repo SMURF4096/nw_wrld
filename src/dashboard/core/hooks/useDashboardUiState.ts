@@ -1,7 +1,12 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from "react";
 import { updateActiveSet } from "../utils";
 
-type Confirmation = { message: string; onConfirm?: () => void; type?: "confirm" | "alert" } | null;
+type Confirmation = {
+  title?: string;
+  message: string;
+  onConfirm?: () => void;
+  type?: "confirm" | "alert";
+} | null;
 
 type EditChannelModalState = { isOpen: boolean; trackIndex: number | null; channelNumber: number | null };
 
@@ -79,9 +84,12 @@ export const useDashboardUiState = ({ selectedChannel, setUserData, activeSetId 
     setEditingTemplateType(null);
   };
 
-  const openConfirmationModal = useCallback((message: string, onConfirm: () => void) => {
-    setConfirmationModal({ message, onConfirm, type: "confirm" });
-  }, []);
+  const openConfirmationModal = useCallback(
+    (message: string, onConfirm: () => void, options?: { title?: string }) => {
+      setConfirmationModal({ title: options?.title, message, onConfirm, type: "confirm" });
+    },
+    []
+  );
 
   const openAlertModal = useCallback((message: string) => {
     setConfirmationModal({ message, type: "alert" });
@@ -250,7 +258,11 @@ export const useDashboardUiState = ({ selectedChannel, setUserData, activeSetId 
     confirmationModal: Confirmation;
     setConfirmationModal: Dispatch<SetStateAction<Confirmation>>;
     openAlertModal: (message: string) => void;
-    openConfirmationModal: (message: string, onConfirm: () => void) => void;
+    openConfirmationModal: (
+      message: string,
+      onConfirm: () => void,
+      options?: { title?: string }
+    ) => void;
 
     debugLogs: string[];
     setDebugLogs: Dispatch<SetStateAction<string[]>>;

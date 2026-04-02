@@ -19,6 +19,7 @@ export const state: {
   projector1Window: unknown | null;
   dashboardWindow: unknown | null;
   inputManager: unknown | null;
+  isWorkspaceSwitchInProgress: boolean;
   workspaceWatcher: FSWatcher | null;
   workspaceWatcherDebounce: NodeJS.Timeout | null;
   currentWorkspacePath: string | null;
@@ -39,6 +40,7 @@ export const state: {
   projector1Window: null,
   dashboardWindow: null,
   inputManager: null,
+  isWorkspaceSwitchInProgress: false,
   workspaceWatcher: null,
   workspaceWatcherDebounce: null,
   currentWorkspacePath: null,

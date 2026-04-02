@@ -12,11 +12,16 @@ import {
   normalizeModuleWithMeta,
 } from "../../../shared/validation/workspaceValidation";
 import {
+  getWorkspaceStarterModuleSyncStatus,
+  rewriteWorkspaceStarterModule,
+} from "../../workspaceStarterModules";
+import {
   isExistingDirectory,
   resolveWithinDir,
   safeModuleName,
 } from "../pathSafety";
 import { getProjectDirForEvent, type SenderEvent } from "./projectContext";
+import { broadcastWorkspaceModulesChanged } from "../workspace";
 
 const MODULE_METADATA_MAX_BYTES = 16 * 1024;
 const MODULE_ID_RULE = "^[A-Za-z][A-Za-z0-9]*$";
@@ -81,6 +86,7 @@ const scanWorkspaceModuleSummaries = async (modulesDir: string) => {
 
       const head = await readFileHeadUtf8(fullPath, MODULE_METADATA_MAX_BYTES);
       const meta = parseNwWrldDocblockMetadata(head, MODULE_METADATA_MAX_BYTES);
+      const starterSync = await getWorkspaceStarterModuleSyncStatus(safe, fullPath);
 
       return {
         file: filename,
@@ -88,6 +94,7 @@ const scanWorkspaceModuleSummaries = async (modulesDir: string) => {
         name: meta.name,
         category: meta.category,
         hasMetadata: meta.hasMetadata,
+        starterSync,
       };
     })
   );
@@ -242,6 +249,26 @@ export function registerWorkspaceBridge(): void {
     try {
       shell.showItemInFolder(fullPath);
     } catch {}
+  });
+
+  ipcMain.handle("bridge:workspace:rewriteStarterModule", async (event, moduleName) => {
+    const projectDir = getProjectDirForEvent(event as unknown as SenderEvent);
+    if (!projectDir || !isExistingDirectory(projectDir)) {
+      return { ok: false, reason: "PROJECT_DIR_MISSING" };
+    }
+    const safe = safeModuleName(moduleName);
+    if (!safe) {
+      return { ok: false, reason: "INVALID_MODULE_NAME" };
+    }
+    const modulesDir = path.join(projectDir, "modules");
+    const fullPath = resolveWithinDir(modulesDir, `${safe}.js`);
+    if (!fullPath) {
+      return { ok: false, reason: "INVALID_MODULE_PATH" };
+    }
+    const result = await rewriteWorkspaceStarterModule(safe, fullPath);
+    if (!result.ok) return result;
+    broadcastWorkspaceModulesChanged(`${safe}.js`);
+    return { ok: true, path: fullPath };
   });
 
   ipcMain.on("bridge:workspace:assetUrl", (event, relPath) => {

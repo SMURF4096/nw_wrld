@@ -254,18 +254,17 @@ export function registerMessagingIpc({ ipcMain }: { ipcMain: Electron.IpcMain })
   });
 }
 
-export function createWindow(projectDir: string | null): void {
+const createProjectorWindow = (projectDir: string | null): BrowserWindow => {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
   const { x: screenX, y: screenY } = primaryDisplay.workArea;
-
   const halfWidth = Math.floor(screenWidth / 2);
   const additionalArgs = ["--nwWrldRequireProject=1"];
   if (projectDir && typeof projectDir === "string") {
     additionalArgs.push(`--nwWrldProjectDir=${projectDir}`);
   }
 
-  state.projector1Window = new BrowserWindow({
+  const projectorWindow = new BrowserWindow({
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -289,9 +288,8 @@ export function createWindow(projectDir: string | null): void {
   });
 
   try {
-    const win = state.projector1Window as { getBounds?: unknown };
-    if (typeof win.getBounds === "function") {
-      state.projectorDefaultBounds = win.getBounds();
+    if (typeof projectorWindow.getBounds === "function") {
+      state.projectorDefaultBounds = projectorWindow.getBounds();
     }
   } catch {}
 
@@ -301,27 +299,91 @@ export function createWindow(projectDir: string | null): void {
   } catch {}
 
   try {
-    const win = state.projector1Window as { once?: unknown; show?: unknown };
-    if (typeof win.once === "function" && typeof win.show === "function") {
-      win.once("ready-to-show", () => {
-        if (!isTestHeadless) {
-          (state.projector1Window as { show: () => void }).show();
-        }
-      });
-    }
+    projectorWindow.once("ready-to-show", () => {
+      if (!isTestHeadless && !projectorWindow.isDestroyed()) {
+        projectorWindow.show();
+      }
+    });
   } catch {}
 
-  (state.projector1Window as BrowserWindow).loadFile(
-    path.join(srcDir, "projector", "views", "projector.html")
-  );
-  (state.projector1Window as BrowserWindow).on("resize", () => {
+  projectorWindow.loadFile(path.join(srcDir, "projector", "views", "projector.html"));
+  projectorWindow.on("resize", () => {
     updateSandboxViewBounds();
   });
-  (state.projector1Window as BrowserWindow).on("closed", () => {
+
+  const wcId = projectorWindow.webContents?.id;
+  if (typeof wcId === "number") {
+    try {
+      state.webContentsToProjectDir.set(wcId, projectDir || null);
+    } catch {}
+  }
+
+  projectorWindow.on("closed", () => {
     try {
       destroySandboxView();
     } catch {}
+    try {
+      if (typeof wcId === "number") {
+        state.webContentsToProjectDir.delete(wcId);
+      }
+    } catch {}
+    if (state.projector1Window === projectorWindow) {
+      state.projector1Window = null;
+      try {
+        (state.inputManager as { attachProjectorWindow?: (win: unknown | null) => void } | null)
+          ?.attachProjectorWindow?.(null);
+      } catch {}
+    }
+
+    const shouldRecoverProjector =
+      !state.didRunShutdownCleanup &&
+      !state.isWorkspaceSwitchInProgress &&
+      state.dashboardWindow &&
+      typeof (state.dashboardWindow as { isDestroyed?: unknown }).isDestroyed === "function" &&
+      !(state.dashboardWindow as { isDestroyed: () => boolean }).isDestroyed();
+    if (!shouldRecoverProjector) return;
+
+    setTimeout(() => {
+      const dashboardStillAlive =
+        state.dashboardWindow &&
+        typeof (state.dashboardWindow as { isDestroyed?: unknown }).isDestroyed === "function" &&
+        !(state.dashboardWindow as { isDestroyed: () => boolean }).isDestroyed();
+      const projectorAlreadyExists =
+        state.projector1Window &&
+        typeof (state.projector1Window as { isDestroyed?: unknown }).isDestroyed === "function" &&
+        !(state.projector1Window as { isDestroyed: () => boolean }).isDestroyed();
+      if (
+        !dashboardStillAlive ||
+        projectorAlreadyExists ||
+        state.isWorkspaceSwitchInProgress ||
+        state.didRunShutdownCleanup
+      ) {
+        return;
+      }
+      const recovered = createProjectorWindow(state.currentProjectDir || projectDir || null);
+      state.projector1Window = recovered;
+      try {
+        (state.inputManager as { attachProjectorWindow?: (win: unknown | null) => void } | null)
+          ?.attachProjectorWindow?.(recovered);
+      } catch {}
+    }, 200);
   });
+
+  return projectorWindow;
+};
+
+export function createWindow(projectDir: string | null): void {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const { x: screenX, y: screenY } = primaryDisplay.workArea;
+
+  const halfWidth = Math.floor(screenWidth / 2);
+  const additionalArgs = ["--nwWrldRequireProject=1"];
+  if (projectDir && typeof projectDir === "string") {
+    additionalArgs.push(`--nwWrldProjectDir=${projectDir}`);
+  }
+
+  state.projector1Window = createProjectorWindow(projectDir);
 
   state.dashboardWindow = new BrowserWindow({
     webPreferences: {
@@ -357,18 +419,6 @@ export function createWindow(projectDir: string | null): void {
     if (wcId != null) {
       state.webContentsToProjectDir.set(wcId as number, projectDir || null);
       (state.dashboardWindow as BrowserWindow).on("closed", () => {
-        try {
-          state.webContentsToProjectDir.delete(wcId as number);
-        } catch {}
-      });
-    }
-  } catch {}
-
-  try {
-    const wcId = (state.projector1Window as { webContents?: { id?: unknown } })?.webContents?.id;
-    if (wcId != null) {
-      state.webContentsToProjectDir.set(wcId as number, projectDir || null);
-      (state.projector1Window as BrowserWindow).on("closed", () => {
         try {
           state.webContentsToProjectDir.delete(wcId as number);
         } catch {}

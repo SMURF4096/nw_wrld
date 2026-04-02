@@ -254,6 +254,7 @@ export const MethodBlock = memo(
               baseDir={option.assetBaseDir}
               extensions={option.assetExtensions}
               allowCustom={option.allowCustom !== false}
+              defaultValue={option.defaultVal}
               value={currentOption.value}
               onChange={(next) => handleOptionChange(option.name, next)}
             />
@@ -604,6 +605,7 @@ export const MethodBlock = memo(
               baseDir={option.assetBaseDir}
               extensions={option.assetExtensions}
               allowCustom={option.allowCustom !== false}
+              defaultValue={option.defaultVal}
               value={currentOption.value}
               onChange={(next) => handleOptionChange(option.name, next)}
             />

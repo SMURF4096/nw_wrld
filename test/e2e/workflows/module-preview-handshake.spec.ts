@@ -80,7 +80,7 @@ test("module preview handshake: dashboard -> projector (preview-module) -> dashb
       .poll(
         async () => {
           const msgs = await getProjectorMessages(projector);
-          const m = msgs.find(
+          const m = [...msgs].reverse().find(
             (x) =>
               x.type === "preview-module" &&
               typeof x.props?.requestId === "string" &&
@@ -102,25 +102,17 @@ test("module preview handshake: dashboard -> projector (preview-module) -> dashb
       .poll(
         async () => {
           const msgs = await getDashboardMessages(dashboard);
-          const gotReady = msgs.some(
+          const match = [...msgs].reverse().find(
             (x) =>
-              x.type === "preview-module-ready" &&
-              x.props?.requestId === requestId &&
-              x.props?.moduleName === moduleName
+              (x.type === "preview-module-ready" || x.type === "preview-module-error") &&
+              x.props?.moduleName === moduleName &&
+              x.props?.requestId === requestId
           );
-          const gotError = msgs.some(
-            (x) =>
-              x.type === "preview-module-error" &&
-              x.props?.requestId === requestId &&
-              x.props?.moduleName === moduleName
-          );
-          if (gotError) return "error";
-          if (gotReady) return "ready";
-          return "pending";
+          return match?.type || "pending";
         },
         { timeout: 25_000 }
       )
-      .toBe("ready");
+      .toBe("preview-module-ready");
   } finally {
     try {
       await app.close();

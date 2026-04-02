@@ -159,6 +159,10 @@ class InputManager {
     this.midiTargetDeviceName = "";
   }
 
+  attachProjectorWindow(projectorWindow: WindowLike | null) {
+    this.projector = projectorWindow;
+  }
+
   private teardownMidiWebMidiListeners() {
     const webMidi = this.midiWebMidi;
     if (!webMidi) return;

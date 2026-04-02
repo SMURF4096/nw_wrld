@@ -32,6 +32,7 @@ export type ModuleSummary = {
   name?: string;
   category?: string;
   hasMetadata: boolean;
+  starterSync?: "inSync" | "outOfSync";
 };
 
 export function normalizeModuleSummaries(value: Jsonish): ModuleSummary[] {
@@ -48,6 +49,9 @@ export function normalizeModuleSummaries(value: Jsonish): ModuleSummary[] {
     const row: ModuleSummary = { file, id, hasMetadata };
     if (name) row.name = name;
     if (category) row.category = category;
+    if (item.starterSync === "inSync" || item.starterSync === "outOfSync") {
+      row.starterSync = item.starterSync;
+    }
     out.push(row);
   }
   return out;

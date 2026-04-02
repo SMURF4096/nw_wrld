@@ -17,7 +17,10 @@ type PreviewControllerContext = {
   handleTrackSelection: (trackName: unknown) => unknown;
   getAssetsBaseUrlForSandboxToken: (token: unknown) => string | null;
 
-  clearPreviewForModule: (moduleName: unknown) => unknown;
+  clearPreviewForModule: (
+    moduleName: unknown,
+    options?: { restoreTrack?: boolean }
+  ) => unknown;
 };
 
 export async function previewModule(
@@ -26,6 +29,16 @@ export async function previewModule(
   moduleData: unknown,
   requestId: unknown = null
 ) {
+  const sendPreviewCancelled = () => {
+    if (!requestId) return;
+    const messaging = getMessaging();
+    messaging?.sendToDashboard?.("preview-module-error", {
+      moduleName,
+      requestId,
+      error: "PREVIEW_CANCELLED",
+    });
+  };
+
   const token = ++this.previewToken;
   const debugEnabled = logger.debugEnabled;
   if (debugEnabled) {
@@ -35,8 +48,9 @@ export async function previewModule(
     logger.log(`🎨 [PREVIEW] Clearing any existing preview...`);
   }
   const prevName = this.previewModuleName;
+  const inheritedRestoreTrackName = this.restoreTrackNameAfterPreview;
   if (prevName) {
-    this.clearPreviewForModule(prevName);
+    this.clearPreviewForModule(prevName, { restoreTrack: false });
   }
 
   const modulesContainer = document.querySelector(".modules");
@@ -57,6 +71,7 @@ export async function previewModule(
   }
 
   if (token !== this.previewToken) {
+    sendPreviewCancelled();
     return;
   }
 
@@ -70,6 +85,7 @@ export async function previewModule(
 
     const src = await this.loadWorkspaceModuleSource(moduleName);
     if (token !== this.previewToken) {
+      sendPreviewCancelled();
       return;
     }
     const moduleSources = { [moduleNameStr]: { text: src?.text || "" } };
@@ -77,7 +93,7 @@ export async function previewModule(
     if (this.activeTrack?.name) {
       this.restoreTrackNameAfterPreview = this.activeTrack.name;
     } else {
-      this.restoreTrackNameAfterPreview = null;
+      this.restoreTrackNameAfterPreview = inheritedRestoreTrackName || null;
     }
 
     if (this.restoreTrackNameAfterPreview) {
@@ -97,6 +113,7 @@ export async function previewModule(
       } catch {}
       this.trackSandboxHost = null;
       this.trackModuleSources = null;
+      sendPreviewCancelled();
       return;
     }
     const assetsBaseUrl = this.getAssetsBaseUrlForSandboxToken(this.trackSandboxHost.token);
@@ -120,6 +137,7 @@ export async function previewModule(
       } catch {}
       this.trackSandboxHost = null;
       this.trackModuleSources = null;
+      sendPreviewCancelled();
       return;
     }
 
@@ -136,14 +154,16 @@ export async function previewModule(
       );
     }
     if (token !== this.previewToken) {
-      this.clearPreviewForModule(moduleName);
+      this.clearPreviewForModule(moduleName, { restoreTrack: false });
+      sendPreviewCancelled();
       if (debugEnabled) logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       return;
     }
     this.activeModules[previewKey] = [{}];
 
     if (token !== this.previewToken) {
-      this.clearPreviewForModule(moduleName);
+      this.clearPreviewForModule(moduleName, { restoreTrack: false });
+      sendPreviewCancelled();
       if (debugEnabled) logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       return;
     }
@@ -167,7 +187,7 @@ export async function previewModule(
       (error as { stack?: unknown } | null)?.stack
     );
 
-    this.clearPreviewForModule(moduleName);
+    this.clearPreviewForModule(moduleName, { restoreTrack: false });
 
     if (debugEnabled) logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
@@ -193,10 +213,14 @@ export function clearPreview(this: PreviewControllerContext) {
   }
 
   const moduleName = this.previewModuleName;
-  this.clearPreviewForModule(moduleName);
+  this.clearPreviewForModule(moduleName, { restoreTrack: true });
 }
 
-export function clearPreviewForModule(this: PreviewControllerContext, moduleName: unknown) {
+export function clearPreviewForModule(
+  this: PreviewControllerContext,
+  moduleName: unknown,
+  options: { restoreTrack?: boolean } = {}
+) {
   const debugEnabled = logger.debugEnabled;
   if (debugEnabled) logger.log(`🧹 [PREVIEW] Clearing preview for: ${moduleName}`);
 
@@ -227,8 +251,11 @@ export function clearPreviewForModule(this: PreviewControllerContext, moduleName
   }
   if (debugEnabled) logger.log(`✅✅✅ [PREVIEW] Preview cleared successfully`);
 
-  const restore = this.restoreTrackNameAfterPreview;
-  this.restoreTrackNameAfterPreview = null;
+  const shouldRestoreTrack = options.restoreTrack !== false;
+  const restore = shouldRestoreTrack ? this.restoreTrackNameAfterPreview : null;
+  if (shouldRestoreTrack) {
+    this.restoreTrackNameAfterPreview = null;
+  }
   if (restore) {
     this.activeTrack = null;
     this.handleTrackSelection(restore);

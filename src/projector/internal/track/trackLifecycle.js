@@ -3,6 +3,12 @@ import logger from "../../helpers/logger";
 import { TrackSandboxHost } from "../sandbox/TrackSandboxHost";
 import { getMessaging } from "../bridge";
 
+const notifyProjectorReady = () => {
+  const messaging = getMessaging();
+  messaging?.sendToDashboard?.("projector-ready", {});
+  logger.log("✅ [PROJECTOR-IPC] Sent projector-ready signal to dashboard");
+};
+
 export function deactivateActiveTrack() {
   if (!this.activeTrack || this.isDeactivating) return;
   this.isDeactivating = true;
@@ -71,7 +77,84 @@ export async function handleTrackSelection(trackName) {
     return;
   }
 
+  const finalizeLoadCycle = () => {
+    if (this.pendingTrackName) {
+      const nextTrack = this.pendingTrackName;
+      this.pendingTrackName = null;
+      if (debugEnabled) logger.log(`🔄 [TRACK] Loading pending track: "${nextTrack}"`);
+      this.handleTrackSelection(nextTrack);
+      return;
+    }
+
+    if (this.pendingReloadData) {
+      const pending = this.pendingReloadData;
+      this.pendingReloadData = null;
+      this.loadUserData(pending.setId);
+      this.applyConfigSettings();
+      if (pending.trackName) {
+        const nextTrack = find(this.userData, { name: pending.trackName });
+        if (
+          this.activeTrack &&
+          this.activeTrack.name === pending.trackName &&
+          nextTrack
+        ) {
+          const activeModules = Array.isArray(this.activeTrack.modules)
+            ? this.activeTrack.modules.filter((m) => !m.disabled)
+            : [];
+          const nextModules = Array.isArray(nextTrack.modules)
+            ? nextTrack.modules.filter((m) => !m.disabled)
+            : [];
+          if (
+            isEqual(
+              {
+                name: this.activeTrack.name,
+                modules: activeModules,
+                modulesData: this.activeTrack.modulesData,
+                channelMappings: this.activeTrack.channelMappings,
+              },
+              {
+                name: nextTrack.name,
+                modules: nextModules,
+                modulesData: nextTrack.modulesData,
+                channelMappings: nextTrack.channelMappings,
+              }
+            )
+          ) {
+            // no-op
+          } else {
+            this.deactivateActiveTrack();
+            this.handleTrackSelection(pending.trackName);
+            return;
+          }
+        } else {
+          this.deactivateActiveTrack();
+          this.handleTrackSelection(pending.trackName);
+          return;
+        }
+      }
+    }
+
+    if (this.pendingWorkspaceReload === true) {
+      this.pendingWorkspaceReload = false;
+      const nextTrackName =
+        (this.activeTrack && this.activeTrack.name) || this.lastRequestedTrackName || null;
+      if (nextTrackName) {
+        this.deactivateActiveTrack();
+        this.handleTrackSelection(nextTrackName);
+        return;
+      }
+    }
+
+    notifyProjectorReady();
+  };
+
+  const finishLoadCycle = () => {
+    this.isLoadingTrack = false;
+    finalizeLoadCycle();
+  };
+
   this.isLoadingTrack = true;
+  this.setRenderStatus?.("loading");
 
   const track = find(this.userData, { name: trackName });
   if (debugEnabled) logger.log("📦 [TRACK] Track found:", track);
@@ -85,8 +168,8 @@ export async function handleTrackSelection(trackName) {
       );
     }
     this.deactivateActiveTrack();
-    this.isLoadingTrack = false;
-    return;
+    this.setRenderStatus?.("error", `Track "${String(trackName || "")}" not found`);
+    return finishLoadCycle();
   }
 
   if (debugEnabled) logger.log("📦 [TRACK] Current activeTrack:", this.activeTrack);
@@ -122,8 +205,8 @@ export async function handleTrackSelection(trackName) {
     ) {
       if (debugEnabled)
         logger.log("⚠️ [TRACK] Track already active with same enabled modules, skipping");
-      this.isLoadingTrack = false;
-      return;
+      this.setRenderStatus?.("ready");
+      return finishLoadCycle();
     }
   }
 
@@ -132,8 +215,8 @@ export async function handleTrackSelection(trackName) {
 
   if (!modulesContainer) {
     logger.error("❌ [TRACK] No .modules container found in DOM!");
-    this.isLoadingTrack = false;
-    return;
+    this.setRenderStatus?.("error", "No module container available");
+    return finishLoadCycle();
   }
 
   if (debugEnabled) logger.log("📦 [TRACK] Track modules to load:", filteredTrack.modules);
@@ -141,8 +224,31 @@ export async function handleTrackSelection(trackName) {
   if (!Array.isArray(filteredTrack.modules)) {
     logger.error(`❌ [TRACK] Track "${trackName}" has invalid modules array:`, filteredTrack.modules);
     if (debugEnabled) logger.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    this.isLoadingTrack = false;
-    return;
+    this.setRenderStatus?.("error", "Track has invalid module configuration");
+    return finishLoadCycle();
+  }
+
+  if (filteredTrack.modules.length === 0) {
+    this.deactivateActiveTrack();
+    this.activeTrack = filteredTrack;
+    this.activeChannelHandlers = this.buildChannelHandlerMap(filteredTrack);
+    this.activeModules = {};
+    this.trackModuleSources = {};
+    this.setRenderStatus?.("empty", "No enabled modules");
+    return finishLoadCycle();
+  }
+
+  if (!this.workspacePath) {
+    if (debugEnabled) {
+      logger.log("⚠️ [TRACK] Skipping track activation without workspace path");
+    }
+    this.deactivateActiveTrack();
+    this.activeTrack = filteredTrack;
+    this.activeChannelHandlers = this.buildChannelHandlerMap(filteredTrack);
+    this.activeModules = {};
+    this.trackModuleSources = {};
+    this.setRenderStatus?.("empty", "Open project folder to load modules");
+    return finishLoadCycle();
   }
 
   try {
@@ -209,6 +315,7 @@ export async function handleTrackSelection(trackName) {
       if (!instanceId) continue;
       this.activeModules[instanceId] = [{}];
     }
+    this.setRenderStatus?.("ready");
     if (debugEnabled) logger.log("✅ [TRACK] Sandbox track initialized");
 
     if (debugEnabled) {
@@ -217,83 +324,25 @@ export async function handleTrackSelection(trackName) {
       logger.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     }
   } catch (error) {
-    logger.error(`❌ [TRACK] Failed to activate track "${trackName}":`, error);
+    const errMessage =
+      error && typeof error === "object" && "message" in error
+        ? String(error.message || "")
+        : String(error || "");
+    const isExpectedSandboxTeardown =
+      errMessage === "SANDBOX_DESTROYED" && !!this.previewModuleName;
+    if (isExpectedSandboxTeardown) {
+      if (debugEnabled) {
+        logger.log(`⚠️ [TRACK] Ignoring expected sandbox teardown during preview transition`);
+      }
+      this.setRenderStatus?.("ready");
+    } else {
+      logger.error(`❌ [TRACK] Failed to activate track "${trackName}":`, error);
+      this.setRenderStatus?.("error", errMessage || "Track failed to load");
+    }
     this.deactivateActiveTrack();
   } finally {
     this.isLoadingTrack = false;
   }
-
-  if (this.pendingTrackName) {
-    const nextTrack = this.pendingTrackName;
-    this.pendingTrackName = null;
-    if (debugEnabled) logger.log(`🔄 [TRACK] Loading pending track: "${nextTrack}"`);
-    this.handleTrackSelection(nextTrack);
-    return;
-  }
-
-  if (this.pendingReloadData) {
-    const pending = this.pendingReloadData;
-    this.pendingReloadData = null;
-    this.loadUserData(pending.setId);
-    this.applyConfigSettings();
-    if (pending.trackName) {
-      const nextTrack = find(this.userData, { name: pending.trackName });
-      if (
-        this.activeTrack &&
-        this.activeTrack.name === pending.trackName &&
-        nextTrack
-      ) {
-        const activeModules = Array.isArray(this.activeTrack.modules)
-          ? this.activeTrack.modules.filter((m) => !m.disabled)
-          : [];
-        const nextModules = Array.isArray(nextTrack.modules)
-          ? nextTrack.modules.filter((m) => !m.disabled)
-          : [];
-        if (
-          isEqual(
-            {
-              name: this.activeTrack.name,
-              modules: activeModules,
-              modulesData: this.activeTrack.modulesData,
-              channelMappings: this.activeTrack.channelMappings,
-            },
-            {
-              name: nextTrack.name,
-              modules: nextModules,
-              modulesData: nextTrack.modulesData,
-              channelMappings: nextTrack.channelMappings,
-            }
-          )
-        ) {
-          // no-op
-        } else {
-          this.deactivateActiveTrack();
-          this.handleTrackSelection(pending.trackName);
-          return;
-        }
-      } else {
-        this.deactivateActiveTrack();
-        this.handleTrackSelection(pending.trackName);
-        return;
-      }
-    }
-  }
-
-  if (this.pendingWorkspaceReload === true) {
-    this.pendingWorkspaceReload = false;
-    const nextTrackName =
-      (this.activeTrack && this.activeTrack.name) || this.lastRequestedTrackName || null;
-    if (nextTrackName) {
-      this.deactivateActiveTrack();
-      this.handleTrackSelection(nextTrackName);
-      return;
-    }
-  }
-
-  {
-    const messaging = getMessaging();
-    messaging?.sendToDashboard?.("projector-ready", {});
-  }
-  logger.log("✅ [PROJECTOR-IPC] Sent projector-ready signal to dashboard");
+  finalizeLoadCycle();
 }
 

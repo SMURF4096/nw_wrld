@@ -7,6 +7,7 @@ import { Button } from "../components/Button";
 type ConfirmationModalProps = {
   isOpen: boolean;
   onClose: () => void;
+  title?: string | null;
   message: string | null;
   onConfirm?: (() => void) | null;
   type?: "confirm" | "alert";
@@ -15,6 +16,7 @@ type ConfirmationModalProps = {
 export const ConfirmationModal = ({
   isOpen,
   onClose,
+  title = null,
   message,
   onConfirm,
   type = "confirm",
@@ -32,7 +34,7 @@ export const ConfirmationModal = ({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="small">
-      <ModalHeader title={isAlert ? "ALERT" : "CONFIRM"} onClose={onClose} />
+      <ModalHeader title={title || (isAlert ? "ALERT" : "CONFIRM")} onClose={onClose} />
 
       <div className="px-6">
         <div className="text-neutral-300 text-[11px] font-mono">{message}</div>

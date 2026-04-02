@@ -160,3 +160,38 @@ test("InputManager.getAvailableMIDIDevices resolves [] when WebMIDI enable never
   }
 });
 
+test("InputManager.attachProjectorWindow rebinds projector broadcast target", () => {
+  const dashboardEvents = [];
+  const projectorAEvents = [];
+  const projectorBEvents = [];
+
+  const mkWindow = (bucket) => ({
+    isDestroyed: () => false,
+    webContents: {
+      isDestroyed: () => false,
+      send: (_channel, payload) => bucket.push(payload),
+    },
+  });
+
+  const prevNow = Date.now;
+  try {
+    Date.now = () => 1700000001000;
+    const dash = mkWindow(dashboardEvents);
+    const projectorA = mkWindow(projectorAEvents);
+    const projectorB = mkWindow(projectorBEvents);
+    const mgr = new InputManager(dash, projectorA);
+
+    mgr.broadcast("method-trigger", { source: "midi", note: 64, channel: 1, velocity: 1 });
+    assert.equal(projectorAEvents.length, 1);
+    assert.equal(projectorBEvents.length, 0);
+
+    mgr.attachProjectorWindow(projectorB);
+    mgr.broadcast("method-trigger", { source: "midi", note: 65, channel: 1, velocity: 1 });
+    assert.equal(projectorAEvents.length, 1);
+    assert.equal(projectorBEvents.length, 1);
+    assert.equal(dashboardEvents.length, 2);
+  } finally {
+    Date.now = prevNow;
+  }
+});
+

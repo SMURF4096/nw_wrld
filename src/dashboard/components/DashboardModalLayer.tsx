@@ -15,7 +15,12 @@ import { NewModuleDialog } from "./NewModuleDialog";
 import type { AudioCaptureState } from "../core/hooks/useDashboardAudioCapture";
 import type { FileAudioState } from "../core/hooks/useDashboardFileAudio";
 
-type Confirmation = { message: string; onConfirm?: () => void; type?: "confirm" | "alert" } | null;
+type Confirmation = {
+  title?: string;
+  message: string;
+  onConfirm?: () => void;
+  type?: "confirm" | "alert";
+} | null;
 
 type UserData = Parameters<typeof SelectSetModal>[0]["userData"];
 type ProjectorSettings = Parameters<typeof SettingsModal>[0]["settings"];
@@ -113,7 +118,11 @@ type DashboardModalLayerProps = {
   confirmationModal: Confirmation;
   setConfirmationModal: (next: Confirmation) => void;
   openAlertModal: (message: string) => void;
-  openConfirmationModal: (message: string, onConfirm: () => void) => void;
+  openConfirmationModal: (
+    message: string,
+    onConfirm: () => void,
+    options?: { title?: string }
+  ) => void;
 };
 
 export const DashboardModalLayer = ({
@@ -285,6 +294,7 @@ export const DashboardModalLayer = ({
         predefinedModules={predefinedModules}
         onCreateNewModule={onCreateNewModule}
         onEditModule={onEditModule}
+        onConfirmRewrite={openConfirmationModal}
         skippedWorkspaceModules={workspaceModuleSkipped}
         mode="add-to-track"
       />
@@ -297,6 +307,7 @@ export const DashboardModalLayer = ({
         predefinedModules={predefinedModules}
         onCreateNewModule={onCreateNewModule}
         onEditModule={onEditModule}
+        onConfirmRewrite={openConfirmationModal}
         skippedWorkspaceModules={workspaceModuleSkipped}
         mode="manage-modules"
       />
@@ -348,6 +359,7 @@ export const DashboardModalLayer = ({
       <ConfirmationModal
         isOpen={!!confirmationModal}
         onClose={() => setConfirmationModal(null)}
+        title={confirmationModal?.title || null}
         message={confirmationModal?.message || ""}
         onConfirm={confirmationModal?.onConfirm}
         type={confirmationModal?.type || "confirm"}

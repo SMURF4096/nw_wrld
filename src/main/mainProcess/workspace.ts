@@ -139,7 +139,7 @@ const waitForWorkspaceSettle = async (modulesDir: string, filename: string | nul
   }
 };
 
-const broadcastWorkspaceModulesChanged = (filename: string | null) => {
+export const broadcastWorkspaceModulesChanged = (filename: string | null) => {
   const safeFilename = filename && typeof filename === "string" ? filename : null;
   const payload = safeFilename ? { filename: safeFilename } : {};
   const dash = state.dashboardWindow as
@@ -367,6 +367,7 @@ export function registerWorkspaceSelectionIpc({
       } catch {}
       state.inputManager = null;
     }
+    state.isWorkspaceSwitchInProgress = true;
 
     const closeWindow = (win: unknown) =>
       new Promise<void>((resolve) => {
@@ -380,15 +381,19 @@ export function registerWorkspaceSelectionIpc({
         }
       });
 
-    await Promise.all([
-      closeWindow(state.dashboardWindow),
-      closeWindow(state.projector1Window),
-    ]);
-    state.dashboardWindow = null;
-    state.projector1Window = null;
+    try {
+      await Promise.all([
+        closeWindow(state.dashboardWindow),
+        closeWindow(state.projector1Window),
+      ]);
+      state.dashboardWindow = null;
+      state.projector1Window = null;
 
-    createWindow(workspacePath);
-    return { cancelled: false, workspacePath };
+      createWindow(workspacePath);
+      return { cancelled: false, workspacePath };
+    } finally {
+      state.isWorkspaceSwitchInProgress = false;
+    }
   });
 }
 

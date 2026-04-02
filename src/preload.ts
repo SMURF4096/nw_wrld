@@ -61,6 +61,8 @@ const nwWrldBridge = {
       ipcRenderer.sendSync("bridge:workspace:moduleExists", moduleName) as unknown,
     showModuleInFolder: (moduleName: unknown) =>
       ipcRenderer.send("bridge:workspace:showModuleInFolder", moduleName),
+    rewriteStarterModule: (moduleName: unknown) =>
+      ipcRenderer.invoke("bridge:workspace:rewriteStarterModule", moduleName),
     assetUrl: (relPath: unknown) =>
       ipcRenderer.sendSync("bridge:workspace:assetUrl", relPath) as unknown,
     listAssets: (relDir: unknown) => ipcRenderer.invoke("bridge:workspace:listAssets", relDir),
